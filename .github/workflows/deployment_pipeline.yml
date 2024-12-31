@@ -1,0 +1,242 @@
+name: Deployment Pipeline
+
+permissions:
+  contents: read
+  issues: write
+  deployments: write
+  id-token: write  # Required for certain authentication methods
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform: deploy or shutdown'
+        required: true
+        default: 'deploy'
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 * * * *'  # Runs hourly
+
+env:
+  CLUSTER: jewelry-processor
+  REGION: us-central1
+  PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_ZONE: ${{ secrets.GKE_ZONE }}
+  COST_THRESHOLD: 150  # Adjusted based on recent usage trends
+  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+
+jobs:
+  # Job 1: Run Tests
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          pip install pytest
+          pytest tests/
+
+  # Job 2: Deploy or Shutdown
+  deploy_or_shutdown:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 1. Setup Google Cloud SDK
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # 2. Check and Create GKE Cluster if it doesn't exist
+      - name: Check and Create GKE Cluster
+        run: |
+          python scripts/check_create_gke_cluster.py \
+            --project ${{ env.PROJECT }} \
+            --region ${{ env.REGION }} \
+            --zone ${{ env.GKE_ZONE }} \
+            --cluster ${{ env.CLUSTER }}
+
+      # 3. Check and Create S3 Bucket if it doesn't exist
+      - name: Check and Create S3 Bucket
+        run: |
+          python scripts/check_create_s3_bucket.py \
+            --bucket ${{ env.S3_BUCKET_NAME }} \
+            --region us-east-1  # Adjust region as needed
+
+      # 4. Configure kubectl to access GKE cluster
+      - name: Configure kubectl
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER }} \
+            --region ${{ env.REGION }} \
+            --zone ${{ env.GKE_ZONE }} \
+            --project ${{ env.PROJECT }}
+
+      # 5. Retrieve Current Billing Cost
+      - name: Retrieve Current Billing Cost
+        id: billing
+        run: |
+          python scripts/get_current_cost.py > cost_output.txt
+          COST=$(cat cost_output.txt)
+          echo "cost=${COST}" >> $GITHUB_OUTPUT
+
+      # 6. Decide to Deploy or Shutdown
+      - name: Decide and Execute Action
+        id: action_decision
+        run: |
+          # Set default action to 'deploy' if not provided
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ACTION="${{ github.event.inputs.action }}"
+          else
+            ACTION="deploy"
+          fi
+          COST="${{ steps.billing.outputs.cost }}"
+
+          echo "Action input: $ACTION"
+          echo "Current Cost: $COST"
+
+          if [[ "$ACTION" == "shutdown" ]] || [[ "$COST" -gt "${COST_THRESHOLD}" ]]; then
+            echo "Decision: Shutdown"
+            python scripts/deploy.py shutdown --config k8s/deploy.yaml
+            echo "status=shutdown" >> $GITHUB_OUTPUT
+          else
+            echo "Decision: Deploy"
+            python scripts/deploy.py deploy --config k8s/deploy.yaml
+            echo "status=deployed" >> $GITHUB_OUTPUT
+          fi
+
+      # 7. Notify via GitHub Issue Comment
+      - name: Notify GitHub Issue
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const status = "${{ steps.action_decision.outputs.status }}"
+            const issue_number = context.payload.pull_request ? context.payload.pull_request.number : context.issue.number
+            if (issue_number) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue_number,
+                body: `🟢 **Deployment Status:** ${status}`
+              })
+            } else {
+              console.log("No issue or pull request context found. Skipping comment.")
+            }
+
+      # 8. Notify Slack
+      - name: Notify Slack
+        if: always()  # Ensures this step runs even if previous steps fail
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          slack-message: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status:* ${{ steps.action_decision.outputs.status }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ github.repository }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n${{ github.sha }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\nProduction"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Logs:* <https://your-log-dashboard.com/?run_id=${{ github.run_id }}|View Logs>"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow Run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Job 3: Cleanup (Optional)
+  cleanup:
+    needs: deploy_or_shutdown
+    runs-on: ubuntu-latest
+    if: always()  # Runs regardless of previous job status
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Perform Cleanup Tasks
+        run: |
+          echo "Running cleanup tasks..."
+          # Add any cleanup commands here, e.g., removing temporary files, etc.

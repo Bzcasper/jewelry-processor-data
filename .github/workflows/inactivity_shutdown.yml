@@ -1,0 +1,165 @@
+name: Inactivity Shutdown Pipeline
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+  actions: read
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # Runs every 10 minutes
+
+env:
+  CLUSTER: jewelry-processor
+  REGION: us-central1
+  PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_ZONE: ${{ secrets.GKE_ZONE }}
+  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+  INACTIVITY_THRESHOLD: 30  # in minutes
+
+jobs:
+  # Job: Check Inactivity and Shutdown
+  check_and_shutdown:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install boto3
+
+      # 1. Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1  # Change to your preferred AWS region
+
+      # 2. Setup Google Cloud SDK
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # 3. Retrieve Last Activity Timestamp from S3
+      - name: Retrieve Last Activity
+        id: get_activity
+        run: |
+          python scripts/get_last_activity.py \
+            --bucket ${{ env.S3_BUCKET_NAME }} \
+            --file last_activity.txt > last_activity_time.txt
+
+          LAST_ACTIVITY=$(cat last_activity_time.txt)
+          CURRENT_TIME=$(date +%s)
+          ELAPSED=$(( (CURRENT_TIME - LAST_ACTIVITY) / 60 ))  # in minutes
+          echo "last_activity=$LAST_ACTIVITY" >> $GITHUB_OUTPUT
+          echo "elapsed=$ELAPSED" >> $GITHUB_OUTPUT
+
+      # 4. Decide to Shutdown
+      - name: Decide to Shutdown
+        id: shutdown_decision
+        run: |
+          ELAPSED="${{ steps.get_activity.outputs.elapsed }}"
+          THRESHOLD="${{ env.INACTIVITY_THRESHOLD }}"
+          echo "Elapsed Time: $ELAPSED minutes"
+          echo "Threshold: $THRESHOLD minutes"
+
+          if [ "$ELAPSED" -ge "$THRESHOLD" ]; then
+            echo "Decision: Shutdown"
+            echo "should_shutdown=true" >> $GITHUB_OUTPUT
+          else
+            echo "Decision: No Shutdown Needed"
+            echo "should_shutdown=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 5. Perform Shutdown if Needed
+      - name: Shutdown Deployment
+        if: steps.shutdown_decision.outputs.should_shutdown == 'true'
+        run: |
+          echo "Shutting down the deployment..."
+          # Configure kubectl
+          gcloud container clusters get-credentials ${{ env.CLUSTER }} \
+            --region ${{ env.REGION }} \
+            --zone ${{ env.GKE_ZONE }} \
+            --project ${{ env.PROJECT }}
+
+          # Example: Scale deployments to zero
+          kubectl scale deployment your-deployment-name --replicas=0
+
+          # Alternatively, delete the cluster (uncomment the following lines if desired)
+          # gcloud container clusters delete ${{ env.CLUSTER }} \
+          #   --region ${{ env.REGION }} \
+          #   --zone ${{ env.GKE_ZONE }} \
+          #   --quiet
+
+      # 6. Notify via GitHub Issue Comment
+      - name: Notify GitHub Issue on Shutdown
+        if: steps.shutdown_decision.outputs.should_shutdown == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const status = "shutdown"
+            const issue_number = context.issue.number
+            if (issue_number) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue_number,
+                body: `🔴 **Deployment Status:** ${status} due to inactivity.`
+              })
+            } else {
+              console.log("No issue context found. Skipping comment.")
+            }
+
+      # 7. Notify Slack on Shutdown
+      - name: Notify Slack on Shutdown
+        if: steps.shutdown_decision.outputs.should_shutdown == 'true'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          slack-message: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status:* shutdown due to inactivity."
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow Run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

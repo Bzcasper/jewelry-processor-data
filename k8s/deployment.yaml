@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jewelry-processor
+  labels:
+    app: jewelry-processor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: jewelry-processor
+  template:
+    metadata:
+      labels:
+        app: jewelry-processor
+    spec:
+      containers:
+        - name: jewelry-processor-container
+          image: your-docker-repo/jewelry-processor:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: S3_BUCKET_NAME
+              value: "data-bucket-aitoolpool"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
