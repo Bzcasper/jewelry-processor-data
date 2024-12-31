@@ -34,7 +34,26 @@ jobs:
       - name: Make Scripts Executable
         run: chmod +x scripts/*.py
 
-      # Step 3: Setup Google Cloud SDK
+      # Step 3: Install actionlint
+      - name: Install actionlint
+        run: |
+          # Define the version you want to install
+          ACTIONLINT_VERSION="v1.9.0"
+
+          # Download the actionlint binary for Linux x86_64
+          curl -L "https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}/actionlint_Linux_x86_64.tar.gz" | tar xz
+
+          # Move the binary to /usr/local/bin
+          sudo mv actionlint /usr/local/bin/
+
+          # Verify installation
+          actionlint --version
+
+      # Step 4: Lint Workflow Files
+      - name: Lint Workflow Files
+        run: actionlint
+
+      # Step 5: Setup Google Cloud SDK
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
@@ -42,13 +61,13 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           export_default_credentials: true
 
-      # Step 4: Authenticate with GKE
+      # Step 6: Authenticate with GKE
       - name: Authenticate with GKE
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # Step 5: Configure Kubectl to access GKE cluster
+      # Step 7: Configure Kubectl to access GKE cluster
       - name: Configure Kubectl
         run: |
           gcloud container clusters get-credentials $CLUSTER \
@@ -56,54 +75,54 @@ jobs:
             --zone $GKE_ZONE \
             --project $PROJECT
 
-      # Step 6: Apply Kubernetes Namespace
+      # Step 8: Apply Kubernetes Namespace
       - name: Apply Namespace
         run: |
           kubectl apply -f kubernetes/namespace.yaml
           kubectl config set-context --current --namespace=$NAMESPACE
 
-      # Step 7: Apply ConfigMap
+      # Step 9: Apply ConfigMap
       - name: Apply ConfigMap
         run: |
           kubectl apply -f kubernetes/configmap.yaml
 
-      # Step 8: Apply Secrets
+      # Step 10: Apply Secrets
       - name: Apply Secrets
         run: |
           kubectl apply -f kubernetes/secrets.yaml
 
-      # Step 9: Apply Persistent Volume Claims
+      # Step 11: Apply Persistent Volume Claims
       - name: Apply Persistent Volume Claims
         run: |
           kubectl apply -f kubernetes/persistent-volume-claims.yaml
 
-      # Step 10: Apply Storage Class
+      # Step 12: Apply Storage Class
       - name: Apply Storage Class
         run: |
           kubectl apply -f kubernetes/storage-class.yaml
 
-      # Step 11: Apply Deployments
+      # Step 13: Apply Deployments
       - name: Apply Deployments
         run: |
           kubectl apply -f kubernetes/web-deployment.yaml
           kubectl apply -f kubernetes/worker-deployment.yaml
 
-      # Step 12: Apply Services
+      # Step 14: Apply Services
       - name: Apply Services
         run: |
           kubectl apply -f kubernetes/services.yaml
 
-      # Step 13: Apply Ingress
+      # Step 15: Apply Ingress
       - name: Apply Ingress
         run: |
           kubectl apply -f kubernetes/ingress.yaml
 
-      # Step 14: Verify Resources
+      # Step 16: Verify Resources
       - name: Verify Resources
         run: |
           kubectl get all -n $NAMESPACE
 
-      # Step 15: Notify Deployment Status via GitHub Issue
+      # Step 17: Notify Deployment Status via GitHub Issue
       - name: Notify GitHub Issue
         if: success()
         uses: actions/github-script@v6
@@ -121,7 +140,7 @@ jobs:
               console.log("No issue or pull request context found. Skipping comment.");
             }
 
-      # Step 16: Notify Slack
+      # Step 18: Notify Slack
       - name: Notify Slack
         if: always()  # Ensures this step runs regardless of previous step success
         uses: slackapi/slack-github-action@v1.24.0
