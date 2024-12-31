@@ -31,7 +31,7 @@ monitoring:
     - type: slack
       webhook: "${SLACK_WEBHOOK_URL}"
     - type: email
-      address: "alerts@yourdomain.com"
+      address: "alerts@aitoolpool.com"
 
 storage:
   backup_bucket: "jewelry-processor-backups"
