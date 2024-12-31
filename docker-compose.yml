@@ -58,16 +58,6 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile.worker
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - REDIS_CACHE_URL=redis://redis-cache:6379
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET=${S3_BUCKET}
-      - MONGODB_URL=mongodb://mongodb:27017/
-      - RABBITMQ_URL=amqp://rabbitmq:5672
-      - MODEL_SERVER_URL=http://triton:8000
-      - MINIO_URL=http://minio:9000
     volumes:
       - ./processed:/app/processed
       - ./uploads:/app/uploads
