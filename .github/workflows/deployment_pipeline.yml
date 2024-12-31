@@ -93,7 +93,7 @@ jobs:
         with:
           project_id: ${{ env.PROJECT }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: true
+          export_default_credentials: false
 
       # 2. Check and Create GKE Cluster if it doesn't exist
       - name: Check and Create GKE Cluster
