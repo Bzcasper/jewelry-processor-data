@@ -214,8 +214,7 @@ class MaximizedWorker:
                     await self.store_results(processed_result)
 
                     logger.info(
-                        f"Image processed successfully: {
-                            processed_result['id']}"
+                        f"Image processed successfully: {processed_result['id']}"
                     )
                     return processed_result
 
