@@ -2,7 +2,9 @@
 import torch
 import torch.nn as nn
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
+from transformers import DetrImageProcessor, DetrForObjectDetection, CLIPProcessor, CLIPModel, BlipProcessor, BlipForConditionalGeneration
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import numpy as np
@@ -63,6 +65,27 @@ class EnhancedObjectDetector:
         # Process results
         probas = outputs.logits.softmax(-1)[0, :, :-1]
         keep = probas.max(-1).values > 0.7
+        y = outputs.pred_boxes[0]
+        boxes  = y[keep].cpu().numpy()
+        labels = probas[keep].max(-1).indices.cpu().numpy()
+        scores = probas[keep].max(-1).values.cpu().numpy()
+        
+        # Convert boxes to image coordinates
+        target_sizes = torch.tensor([image.size[::-1]]).to(self.device)
+        postprocessed_outputs = self.detr_processor.post_process_object_detection(
+            outputs, 
+            target_sizes=target_sizes, 
+            threshold=0.7
+        )[0]
+        
+        boxes = postprocessed_outputs['boxes'].cpu().numpy().tolist()
+        labels = [
+            self.detr_model.config.id2label[label.item()]
+            for label in postprocessed_outputs['labels']
+        ]
+        scores = postprocessed_outputs['scores'].cpu().numpy().tolist()
+        
+        return DetectionResult(boxes=boxes, labels=labels, scores=scores)
         
         # Convert boxes to image coordinates
         target_sizes = torch.tensor([image.size[::-1]]).to(self.device)
