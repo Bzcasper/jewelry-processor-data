@@ -6,62 +6,184 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+  deployments: write
+  id-token: write  # Required for authentication
+
+env:
+  CLUSTER: jewelry-processor
+  REGION: us-central1
+  PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_ZONE: ${{ secrets.GKE_ZONE }}
+  COST_THRESHOLD: 150  # Adjust based on usage trends
+  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+  NAMESPACE: jewelry-processor  # Your actual namespace
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
+      # Step 1: Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Set up Kubectl
-        uses: azure/setup-kubectl@v3
+      # Step 2: Setup Google Cloud SDK
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
         with:
-          version: 'latest'
+          project_id: ${{ env.PROJECT }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
 
+      # Step 3: Authenticate with GKE
       - name: Authenticate with GKE
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # Step 4: Configure Kubectl to access GKE cluster
       - name: Configure Kubectl
         run: |
-          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} \
-            --region ${{ secrets.GCP_REGION }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud container clusters get-credentials $CLUSTER \
+            --region $REGION \
+            --zone $GKE_ZONE \
+            --project $PROJECT
 
+      # Step 5: Apply Kubernetes Namespace
       - name: Apply Namespace
         run: |
           kubectl apply -f kubernetes/namespace.yaml
+          kubectl config set-context --current --namespace=$NAMESPACE
 
+      # Step 6: Apply ConfigMap
       - name: Apply ConfigMap
         run: |
           kubectl apply -f kubernetes/configmap.yaml
 
+      # Step 7: Apply Secrets
       - name: Apply Secrets
         run: |
           kubectl apply -f kubernetes/secrets.yaml
 
+      # Step 8: Apply Persistent Volume Claims
       - name: Apply Persistent Volume Claims
         run: |
           kubectl apply -f kubernetes/persistent-volume-claims.yaml
 
+      # Step 9: Apply Storage Class
       - name: Apply Storage Class
         run: |
           kubectl apply -f kubernetes/storage-class.yaml
 
+      # Step 10: Apply Deployments
       - name: Apply Deployments
         run: |
           kubectl apply -f kubernetes/web-deployment.yaml
           kubectl apply -f kubernetes/worker-deployment.yaml
 
+      # Step 11: Apply Services
       - name: Apply Services
         run: |
           kubectl apply -f kubernetes/services.yaml
 
+      # Step 12: Apply Ingress
       - name: Apply Ingress
         run: |
           kubectl apply -f kubernetes/ingress.yaml
 
+      # Step 13: Verify Resources
       - name: Verify Resources
         run: |
-          kubectl get all -n your-namespace
+          kubectl get all -n $NAMESPACE
+
+      # Step 14: Notify Deployment Status via GitHub Issue
+      - name: Notify GitHub Issue
+        if: success()
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const issue_number = context.payload.pull_request ? context.payload.pull_request.number : context.issue.number;
+            if (issue_number) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue_number,
+                body: `✅ **Deployment Successful:** All Kubernetes resources have been deployed to the *${process.env.NAMESPACE}* namespace.`
+              });
+            } else {
+              console.log("No issue or pull request context found. Skipping comment.");
+            }
+
+      # Step 15: Notify Slack
+      - name: Notify Slack
+        if: always()  # Ensures this step runs regardless of previous step success
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          slack-message: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status:* ${{ job.status }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ github.repository }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n${{ github.sha }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ env.NAMESPACE }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Logs:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow Run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      # Optional: Cleanup Job (Runs regardless of deploy job success/failure)
+      cleanup:
+        needs: deploy
+        runs-on: ubuntu-latest
+        if: always()
+        steps:
+          - name: Checkout Repository
+            uses: actions/checkout@v3
+
+          - name: Perform Cleanup Tasks
+            run: |
+              echo "Running cleanup tasks..."
+              # Add any cleanup commands here, e.g., removing temporary files,

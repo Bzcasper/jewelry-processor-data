@@ -87,15 +87,20 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 1. Setup Google Cloud SDK
+      # 1. Authenticate with Google Cloud
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # 2. Setup Google Cloud SDK
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: false
+          export_default_credentials: true
 
-      # 2. Check and Create GKE Cluster if it doesn't exist
+      # 3. Check and Create GKE Cluster if it doesn't exist
       - name: Check and Create GKE Cluster
         run: |
           python scripts/check_create_gke_cluster.py \
@@ -104,14 +109,14 @@ jobs:
             --zone ${{ env.GKE_ZONE }} \
             --cluster ${{ env.CLUSTER }}
 
-      # 3. Check and Create S3 Bucket if it doesn't exist
+      # 4. Check and Create S3 Bucket if it doesn't exist
       - name: Check and Create S3 Bucket
         run: |
           python scripts/check_create_s3_bucket.py \
             --bucket ${{ env.S3_BUCKET_NAME }} \
             --region us-east-1  # Adjust region as needed
 
-      # 4. Configure kubectl to access GKE cluster
+      # 5. Configure kubectl to access GKE cluster
       - name: Configure kubectl
         run: |
           gcloud container clusters get-credentials ${{ env.CLUSTER }} \
@@ -119,7 +124,7 @@ jobs:
             --zone ${{ env.GKE_ZONE }} \
             --project ${{ env.PROJECT }}
 
-      # 5. Retrieve Current Billing Cost
+      # 6. Retrieve Current Billing Cost
       - name: Retrieve Current Billing Cost
         id: billing
         run: |
@@ -127,7 +132,7 @@ jobs:
           COST=$(cat cost_output.txt)
           echo "cost=${COST}" >> $GITHUB_OUTPUT
 
-      # 6. Decide to Deploy or Shutdown
+      # 7. Decide to Deploy or Shutdown
       - name: Decide and Execute Action
         id: action_decision
         run: |
@@ -152,7 +157,7 @@ jobs:
             echo "status=deployed" >> $GITHUB_OUTPUT
           fi
 
-      # 7. Notify via GitHub Issue Comment
+      # 8. Notify via GitHub Issue Comment
       - name: Notify GitHub Issue
         uses: actions/github-script@v6
         with:
@@ -170,7 +175,7 @@ jobs:
               console.log("No issue or pull request context found. Skipping comment.")
             }
 
-      # 8. Notify Slack
+      # 9. Notify Slack
       - name: Notify Slack
         if: always()  # Ensures this step runs even if previous steps fail
         uses: slackapi/slack-github-action@v1.24.0
