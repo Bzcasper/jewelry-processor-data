@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link href="{{ url_for('static', filename='main.bundle.css') }}" rel="stylesheet">
+</head>
+<body>
+    <title>Jewelry Detection System</title>
+    {{ dropzone.load_css() }}
+    {{ dropzone.style('
+        .dropzone {
+            border: 2px dashed #3498db;
+            border-radius: 5px;
+            min-height: 300px;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+    ') }}
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Jewelry Detection System</h1>
+        {{ dropzone.create(action='upload') }}
+        <div id="status"></div>
+    </div>
+    {{ dropzone.load_js() }}
+    {{ dropzone.config(
+        success="function(file, response) {
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            status.className = 'success';
+            status.textContent = 'Processing complete! Check the processed folder.';
+        }",
+        error="function(file, error) {
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            status.className = 'error';
+            status.textContent = error;
+        }"
+    ) }}
+    <script src="{{ url_for('static', filename='main.bundle.js') }}"></script>
+</body>
+</html>

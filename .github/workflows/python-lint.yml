@@ -1,0 +1,28 @@
+name: Python Lint and Format
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install flake8 black autopep8
+
+    - name: Lint code with flake8
+      run: flake8 src/
+
+    - name: Format code with black
+      run: black src/
+
+    - name: Fix code with autopep8
+      run: autopep8 --in-place --aggressive --recursive src/

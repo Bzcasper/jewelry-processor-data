@@ -1,0 +1,8 @@
+# storage-class.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: jewelry-processor-storage
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd

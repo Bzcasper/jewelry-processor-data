@@ -1,0 +1,25 @@
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jewelry-processor-ingress
+  namespace: jewelry-processor
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  rules:
+  - host: jewelry-processor.aitoolpool.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: jewelry-processor-web-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - jewelry-processor.aitoolpool.com
+    secretName: jewelry-processor-tls

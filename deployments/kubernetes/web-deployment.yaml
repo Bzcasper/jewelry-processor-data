@@ -1,0 +1,40 @@
+# web-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jewelry-processor-web
+  namespace: jewelry-processor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: jewelry-processor-web
+  template:
+    metadata:
+      labels:
+        app: jewelry-processor-web
+    spec:
+      containers:
+      - name: web
+        image: your-registry/jewelry-processor-web:latest
+        ports:
+        - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: jewelry-processor-config
+        - secretRef:
+            name: jewelry-processor-secrets
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: jewelry-processor-data

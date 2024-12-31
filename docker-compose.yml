@@ -1,0 +1,208 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.9
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik-public
+      - backend
+
+  web:
+    build: 
+      context: .
+      dockerfile: Dockerfile.web
+    volumes:
+      - ./processed:/app/processed
+      - ./uploads:/app/uploads
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - REDIS_CACHE_URL=redis://redis-cache:6379
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      - MONGODB_URL=mongodb://mongodb:27017/
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - MODEL_SERVER_URL=http://triton:8000
+      - MINIO_URL=http://minio:9000
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`jewelry.localhost`)"
+    networks:
+      - traefik-public
+      - backend
+
+  worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - REDIS_CACHE_URL=redis://redis-cache:6379
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      - MONGODB_URL=mongodb://mongodb:27017/
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - MODEL_SERVER_URL=http://triton:8000
+      - MINIO_URL=http://minio:9000
+    volumes:
+      - ./processed:/app/processed
+      - ./uploads:/app/uploads
+    deploy:
+      replicas: 4
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - backend
+
+  redis:
+    image: redis/redis-stack:latest
+    command: redis-stack-server --save 60 1 --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+
+  redis-cache:
+    image: redis/redis-stack:latest
+    command: redis-stack-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    networks:
+      - backend
+
+  mongodb:
+    image: mongo:latest
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - backend
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - backend
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    depends_on:
+      - elasticsearch
+    networks:
+      - backend
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kibana.rule=Host(`kibana.jewelry.localhost`)"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    networks:
+      - backend
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.jewelry.localhost`)"
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:22.12-py3
+    command: tritonserver --model-repository=/models
+    volumes:
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - backend
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - backend
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=Host(`minio.jewelry.localhost`)"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    networks:
+      - backend
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jaeger.rule=Host(`jaeger.jewelry.localhost`)"
+
+networks:
+  traefik-public:
+  backend:
+
+volumes:
+  redis_data:
+  mongodb_data:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:
+  rabbitmq_data:
+  minio_data:

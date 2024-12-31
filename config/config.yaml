@@ -1,0 +1,51 @@
+# config/config.yaml
+apiVersion: v1
+kind: Config
+metadata:
+  name: jewelry-processor-config
+
+deployment:
+  name: jewelry-processor
+  region: us-central1
+  zones: 
+    - us-central1-a
+    - us-central1-b
+
+resources:
+  web:
+    min_replicas: 2
+    max_replicas: 10
+    cpu_request: "1"
+    memory_request: "2Gi"
+  worker:
+    min_replicas: 2
+    max_replicas: 8
+    cpu_request: "2"
+    memory_request: "4Gi"
+    gpu_request: "1"
+
+monitoring:
+  prometheus_retention: "15d"
+  grafana_admin_user: "admin"
+  alert_channels:
+    - type: slack
+      webhook: "${SLACK_WEBHOOK_URL}"
+    - type: email
+      address: "alerts@yourdomain.com"
+
+storage:
+  backup_bucket: "jewelry-processor-backups"
+  model_bucket: "jewelry-model-weights"
+  image_bucket: "jewelry-processed-images"
+
+processing:
+  batch_size: 16
+  max_image_size: 4096
+  supported_formats:
+    - jpg
+    - png
+    - webp
+  preprocessing:
+    denoise_strength: 0.5
+    sharpen_amount: 0.3
+    contrast_boost: 0.2

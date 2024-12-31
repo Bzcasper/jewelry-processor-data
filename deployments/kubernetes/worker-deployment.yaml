@@ -1,0 +1,36 @@
+# worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jewelry-processor-worker
+  namespace: jewelry-processor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: jewelry-processor-worker
+  template:
+    metadata:
+      labels:
+        app: jewelry-processor-worker
+    spec:
+      containers:
+      - name: worker
+        image: your-registry/jewelry-processor-worker:latest
+        envFrom:
+        - configMapRef:
+            name: jewelry-processor-config
+        - secretRef:
+            name: jewelry-processor-secrets
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+          limits:
+            nvidia.com/gpu: 1
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: jewelry-processor-data

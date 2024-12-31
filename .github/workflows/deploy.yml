@@ -1,0 +1,81 @@
+# .github/workflows/deploy.yml
+name: Deploy Jewelry Processor
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 * * * *'  # Check every hour
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform (deploy/shutdown)'
+        required: true
+        default: 'deploy'
+
+env:
+  CLUSTER_NAME: jewelry-processor
+  REGION: us-central1
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
+jobs:
+  manage-deployment:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml kubernetes google-cloud-sdk
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v0
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Configure kubectl
+      run: |
+        gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} \
+          --region ${{ env.REGION }} \
+          --project ${{ env.PROJECT_ID }}
+
+    - name: Check cluster cost
+      id: cost-check
+      run: |
+        COST=$(gcloud billing projects describe ${{ env.PROJECT_ID }} \
+          --format="value(billingEnabled)")
+        echo "current_cost=$COST" >> $GITHUB_OUTPUT
+
+    - name: Deploy/Shutdown based on cost and schedule
+      run: |
+        if [[ "${{ github.event.inputs.action }}" == "shutdown" ]] || \
+           [[ "${{ steps.cost-check.outputs.current_cost }}" > "100" ]]; then
+          echo "Shutting down cluster..."
+          python deploy.py shutdown --config config.yaml
+        else
+          echo "Deploying cluster..."
+          python deploy.py deploy --config config.yaml
+        fi
+
+    - name: Notify status
+      if: always()
+      uses: actions/github-script@v4
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const { issue, repo } = context;
+          github.issues.createComment({
+            ...repo,
+            issue_number: issue.number,
+            body: `Deployment status: ${process.env.STATUS}`
+          });

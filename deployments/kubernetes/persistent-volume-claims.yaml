@@ -1,0 +1,13 @@
+# persistent-volume-claims.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jewelry-processor-data
+  namespace: jewelry-processor
+spec:
+  storageClassName: jewelry-processor-storage
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi

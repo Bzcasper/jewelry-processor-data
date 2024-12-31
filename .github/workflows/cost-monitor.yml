@@ -1,0 +1,29 @@
+# .github/workflows/cost-monitor.yml
+name: Monitor Cluster Costs
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Check every 30 minutes
+
+jobs:
+  check-costs:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v0
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Check costs and shutdown if necessary
+      run: |
+        COST=$(gcloud billing projects describe ${{ secrets.GCP_PROJECT_ID }} \
+          --format="value(billingEnabled)")
+        if [[ "$COST" > "100" ]]; then
+          echo "Cost threshold exceeded. Initiating shutdown..."
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type":"shutdown","client_payload":{"reason":"cost_exceeded"}}'
+        fi

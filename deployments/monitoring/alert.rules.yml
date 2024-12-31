@@ -1,0 +1,29 @@
+groups:
+- name: jewelry_processor_alerts
+  rules:
+  - alert: HighProcessingTime
+    expr: avg_over_time(image_processing_seconds_bucket[5m]) > 30
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: High image processing time
+      description: Average processing time is above 30 seconds
+
+  - alert: HighErrorRate
+    expr: rate(processing_errors_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: High error rate in processing
+      description: Error rate is above 10%
+
+  - alert: GPUUtilizationHigh
+    expr: nvidia_gpu_utilization > 90
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: High GPU utilization
+      description: GPU utilization is above 90%
