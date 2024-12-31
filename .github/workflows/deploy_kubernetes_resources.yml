@@ -30,7 +30,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: Setup Google Cloud SDK
+      # Step 2: Make Scripts Executable (Optional if already done)
+      - name: Make Scripts Executable
+        run: chmod +x scripts/*.py
+
+      # Step 3: Setup Google Cloud SDK
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
@@ -38,13 +42,13 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           export_default_credentials: true
 
-      # Step 3: Authenticate with GKE
+      # Step 4: Authenticate with GKE
       - name: Authenticate with GKE
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # Step 4: Configure Kubectl to access GKE cluster
+      # Step 5: Configure Kubectl to access GKE cluster
       - name: Configure Kubectl
         run: |
           gcloud container clusters get-credentials $CLUSTER \
@@ -52,54 +56,54 @@ jobs:
             --zone $GKE_ZONE \
             --project $PROJECT
 
-      # Step 5: Apply Kubernetes Namespace
+      # Step 6: Apply Kubernetes Namespace
       - name: Apply Namespace
         run: |
           kubectl apply -f kubernetes/namespace.yaml
           kubectl config set-context --current --namespace=$NAMESPACE
 
-      # Step 6: Apply ConfigMap
+      # Step 7: Apply ConfigMap
       - name: Apply ConfigMap
         run: |
           kubectl apply -f kubernetes/configmap.yaml
 
-      # Step 7: Apply Secrets
+      # Step 8: Apply Secrets
       - name: Apply Secrets
         run: |
           kubectl apply -f kubernetes/secrets.yaml
 
-      # Step 8: Apply Persistent Volume Claims
+      # Step 9: Apply Persistent Volume Claims
       - name: Apply Persistent Volume Claims
         run: |
           kubectl apply -f kubernetes/persistent-volume-claims.yaml
 
-      # Step 9: Apply Storage Class
+      # Step 10: Apply Storage Class
       - name: Apply Storage Class
         run: |
           kubectl apply -f kubernetes/storage-class.yaml
 
-      # Step 10: Apply Deployments
+      # Step 11: Apply Deployments
       - name: Apply Deployments
         run: |
           kubectl apply -f kubernetes/web-deployment.yaml
           kubectl apply -f kubernetes/worker-deployment.yaml
 
-      # Step 11: Apply Services
+      # Step 12: Apply Services
       - name: Apply Services
         run: |
           kubectl apply -f kubernetes/services.yaml
 
-      # Step 12: Apply Ingress
+      # Step 13: Apply Ingress
       - name: Apply Ingress
         run: |
           kubectl apply -f kubernetes/ingress.yaml
 
-      # Step 13: Verify Resources
+      # Step 14: Verify Resources
       - name: Verify Resources
         run: |
           kubectl get all -n $NAMESPACE
 
-      # Step 14: Notify Deployment Status via GitHub Issue
+      # Step 15: Notify Deployment Status via GitHub Issue
       - name: Notify GitHub Issue
         if: success()
         uses: actions/github-script@v6
@@ -117,7 +121,7 @@ jobs:
               console.log("No issue or pull request context found. Skipping comment.");
             }
 
-      # Step 15: Notify Slack
+      # Step 16: Notify Slack
       - name: Notify Slack
         if: always()  # Ensures this step runs regardless of previous step success
         uses: slackapi/slack-github-action@v1.24.0
@@ -174,16 +178,16 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-      # Optional: Cleanup Job (Runs regardless of deploy job success/failure)
-      cleanup:
-        needs: deploy
-        runs-on: ubuntu-latest
-        if: always()
-        steps:
-          - name: Checkout Repository
-            uses: actions/checkout@v3
+    # Optional: Cleanup Job (Runs regardless of deploy job success/failure)
+    cleanup:
+      needs: deploy
+      runs-on: ubuntu-latest
+      if: always()
+      steps:
+        - name: Checkout Repository
+          uses: actions/checkout@v3
 
-          - name: Perform Cleanup Tasks
-            run: |
-              echo "Running cleanup tasks..."
-              # Add any cleanup commands here, e.g., removing temporary files,
+        - name: Perform Cleanup Tasks
+          run: |
+            echo "Running cleanup tasks..."
+            # Add any cleanup commands here, e.g., removing temporary files, etc.
