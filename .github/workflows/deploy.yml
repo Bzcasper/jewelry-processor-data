@@ -1,84 +1,224 @@
 name: Deployment Pipeline
 
+# Permissions for the workflow
 permissions:
   contents: read
   issues: write
   deployments: write
+  id-token: write  # Required for authentication
 
+# Triggers for the workflow
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 0 * * *'  # Runs daily at midnight
   workflow_dispatch:
     inputs:
       action:
-        description: 'deploy/shutdown'
+        description: 'Action to perform: deploy or shutdown'
         required: true
         default: 'deploy'
 
+# Global environment variables
 env:
   CLUSTER: jewelry-processor
   REGION: us-central1
-  PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  PROJECT: ${GCP_PROJECT_ID}
   COST_THRESHOLD: 100
+  ENVIRONMENT: production  # Can be staging or production
 
 jobs:
-  deploy:
+  # Job 1: Provision Infrastructure
+  infrastructure:
+    name: Provision Infrastructure with Terraform
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
-      - uses: actions/setup-python@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
+
+      - name: Initialize Terraform
+        run: terraform init
+        working-directory: ./terraform
+
+      - name: Validate Terraform Configuration
+        run: terraform validate
+        working-directory: ./terraform
+
+      - name: Plan Infrastructure Changes
+        id: plan
+        run: terraform plan -out=tfplan
+        working-directory: ./terraform
+
+      - name: Apply Infrastructure Changes
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan
+        working-directory: ./terraform
+
+      - name: Upload Terraform State
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-state
+          path: ./terraform/terraform.tfstate
+
+  # Job 2: Run Tests
+  test:
+    name: Run Unit and Integration Tests
+    runs-on: ubuntu-latest
+    needs: infrastructure
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-          cache: 'pip'
-      
+
       - name: Install Dependencies
         run: |
           pip install -r requirements.txt
-          pip install google-cloud-sdk==450.0.0
 
-      - name: GCP Auth
+      - name: Run Unit Tests
+        run: |
+          pytest tests/unit/
+
+      - name: Run Integration Tests
+        run: |
+          pytest tests/integration/
+
+  # Job 3: Deploy or Shutdown
+  deploy_or_shutdown:
+    name: Deploy or Shutdown Kubernetes Services
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        environment: [staging, production]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          RUN curl https://sdk.cloud.google.com > /tmp/gc && \
+          bash /tmp/gc --disable-prompts --install-dir=/usr/local
+
+      - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${ secrets.GCP_SA_KEY }
 
-      - name: Configure Cluster
+      - name: Configure kubectl
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER }} \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT }}
+          kubectl config set-context --current --namespace=${{ matrix.environment }}
+
+      - name: Retrieve Current Billing Costs
+        id: billing
+        run: |
+          pip install google-cloud-billing
+          python scripts/get_current_cost.py > cost_output.txt
+          COST=$(cat cost_output.txt)
+          echo "cost=$COST" >> $GITHUB_OUTPUT
+
+      - name: Deploy or Shutdown
+        id: decision
+        run: |
+          ACTION="${{ github.event.inputs.action }}"
+          COST="${{ steps.billing.outputs.cost }}"
+          echo "Action: $ACTION"
+          echo "Current Cost: $COST"
+
+          if [[ "$ACTION" == "shutdown" || "$COST" -gt "$COST_THRESHOLD" ]]; then
+            echo "Shutting down services..."
+            python scripts/deploy.py shutdown --config config/${{ matrix.environment }}.yaml
+            echo "status=shutdown" >> $GITHUB_OUTPUT
+          else
+            echo "Deploying services..."
+            python scripts/deploy.py deploy --config config/${{ matrix.environment }}.yaml
+            echo "status=deployed" >> $GITHUB_OUTPUT
+
+      - name: Notify Deployment Status
+        uses: actions/github-script@v6
+        with:
+          github-token: ${GH_TOKEN}
+          script: |
+            const status = "${{ steps.decision.outputs.status }}"
+            const env = "${{ matrix.environment }}"
+            const issue_number = context.payload.pull_request ? context.payload.pull_request.number : null
+            if (issue_number) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue_number,
+                body: `🔔 **Deployment Status**: ${status} for environment **${env}**`
+              })
+            }
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "🔔 Deployment Status: ${{ steps.decision.outputs.status }} for environment **${{ matrix.environment }}**.\nRepository: ${{ github.repository }}\nCommit: ${{ github.sha }}\n[View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+
+  # Job 4: Monitoring
+  monitoring:
+    name: Deploy Monitoring Resources
+    runs-on: ubuntu-latest
+    needs: deploy_or_shutdown
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${GCP_SA_KEY}
+
+      - name: Configure kubectl
         run: |
           gcloud container clusters get-credentials ${{ env.CLUSTER }} \
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT }}
 
-      - name: Cost Check
-        id: costs
+      - name: Apply Monitoring Configurations
         run: |
-          COST=$(gcloud billing projects describe ${{ env.PROJECT }} \
-            --format="value(billingEnabled)")
-          echo "cost=$COST" >> $GITHUB_OUTPUT
+          kubectl apply -f kubernetes/monitoring/prometheus.yml
+          kubectl apply -f kubernetes/monitoring/alert.rules.yml
 
-      - name: Deploy/Shutdown
-        id: deploy
+  # Job 5: Cleanup
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    needs: monitoring
+    if: always()
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Perform Cleanup Tasks
         run: |
-          if [[ "${{ github.event.inputs.action }}" == "shutdown" ]] || \
-             [[ "${{ steps.costs.outputs.cost }}" > "${{ env.COST_THRESHOLD }}" ]]; then
-            python scripts/deploy.py shutdown
-            echo "status=shutdown" >> $GITHUB_OUTPUT
-          else
-            python scripts/deploy.py deploy
-            echo "status=deployed" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify Status
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GH_TOKEN }}
-          script: |
-            const status = "${{ steps.deploy.outputs.status }}"
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
-              body: `Deployment status: ${status}`
-            })
+          echo "Cleaning up unused resources..."
+          # Add specific cleanup tasks here

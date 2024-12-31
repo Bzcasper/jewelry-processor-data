@@ -3,8 +3,12 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: jewelry-processor-config
-  namespace: jewelry-processor
+  namespace: default
+  labels:
+    app: jewelry-processor
 data:
-  REDIS_URL: "redis://redis-service:6379"
-  MONGO_URL: "mongodb://mongo-service:27017"
-  LOG_LEVEL: "DEBUG"
+  DATABASE_HOST: "localhost"
+  DATABASE_PORT: "27017"
+  DATABASE_NAME: "jewelry-db"
+  APP_ENV: "development"
+  LOG_LEVEL: "info"
