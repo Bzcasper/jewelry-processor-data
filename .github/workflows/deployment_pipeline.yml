@@ -5,7 +5,19 @@ permissions:
   issues: write
   deployments: write
   id-token: write  # Required for certain authentication methods
-
+terraform:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v3
+    
+    - uses: hashicorp/setup-terraform@v2
+      
+    - name: Terraform Init
+      run: |
+        cd terraform # Adjust path as needed
+        terraform init
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GCP_SA_KEY }}
 on:
   workflow_dispatch:
     inputs:
@@ -59,7 +71,19 @@ jobs:
         run: |
           pip install pytest
           pytest tests/
-
+  terraform:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v3
+    
+    - uses: hashicorp/setup-terraform@v2
+      
+    - name: Terraform Init
+      run: |
+        cd terraform # Adjust path as needed
+        terraform init
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GCP_SA_KEY }}
   # Job 2: Deploy or Shutdown
   deploy_or_shutdown:
     needs: test
