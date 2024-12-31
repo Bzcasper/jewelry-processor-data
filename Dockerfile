@@ -1,49 +1,45 @@
-# Multi-stage build for optimized production image
-FROM python:3.9-slim
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as base
+FROM python:3.9-slim as builder
 
-# Set working directory and environment variables
-WORKDIR /app
+# Core env vars
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
-    CUDA_VISIBLE_DEVICES=all
+    FLASK_APP=app.py \
+    FLASK_ENV=production
 
-    
-# Install Node.js and build frontend
-RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
-    RUN apt-get install -y nodejs
-    COPY frontend /app/frontend
-    WORKDIR /app/frontend
-    RUN npm install
-    RUN npm run build
-    
-    # Copy built assets
-COPY frontend/src/web/static/dist /app/src/web/static/dist
+WORKDIR /app
 
-# Install system dependencies
+# System dependencies
 RUN apt-get update && apt-get install -y \
-    python3.9 \
-    python3-pip \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create logging directory
-RUN mkdir -p /var/log/jewelry-processor
+# Frontend build
+RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
+    apt-get install -y nodejs
+COPY frontend/package*.json ./frontend/
+WORKDIR /app/frontend
+RUN npm ci
+COPY frontend .
+RUN npm run build
 
-# Install Python dependencies
+# Python deps
+WORKDIR /app
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# App code
 COPY . .
-
-# Set up logging configuration
+RUN mkdir -p /var/log/jewelry-processor
 COPY logging.conf /etc/jewelry-processor/logging.conf
 
-# Expose ports
 EXPOSE 5000
-
-# Run the application with proper logging
-CMD ["python3", "-u", "app.py"]
+CMD ["python", "-u", "app.py"]
