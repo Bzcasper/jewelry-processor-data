@@ -1,89 +1,84 @@
-# .github/workflows/deploy.yml
 name: Deployment Pipeline
-# .github/workflows/deploy.yml
+
 permissions:
   contents: read
   issues: write
   deployments: write
-  jobs:
-  deploy:
-    steps:
-      - uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GH_TOKEN }}
+
 on:
- push:
-   branches: [main]
- pull_request:
-   branches: [main] 
- schedule:
-   - cron: '0 * * * *' # Hourly cost check
- workflow_dispatch:
-   inputs:
-     action:
-       description: 'deploy/shutdown'
-       required: true
-       default: 'deploy'
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'deploy/shutdown'
+        required: true
+        default: 'deploy'
 
 env:
- CLUSTER: jewelry-processor
- REGION: us-central1
- PROJECT: ${{ secrets.GCP_PROJECT_ID }}
- COST_THRESHOLD: 100
+  CLUSTER: jewelry-processor
+  REGION: us-central1
+  PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  COST_THRESHOLD: 100
 
 jobs:
- deploy:
-   runs-on: ubuntu-latest
-   steps:
-     - uses: actions/checkout@v3
-     
-     - uses: actions/setup-python@v4
-       with:
-         python-version: '3.9'
-         cache: 'pip'
-     
-     - name: Install
-       run: |
-         pip install -r requirements.txt
-         pip install google-cloud-sdk==450.0.0
-     
-     - name: Auth
-       uses: google-github-actions/auth@v1
-       with:
-         credentials_json: ${{ secrets.GCP_SA_KEY }}
-     
-     - name: Configure
-       run: |
-         gcloud container clusters get-credentials ${{ env.CLUSTER }} \
-           --region ${{ env.REGION }} \
-           --project ${{ env.PROJECT }}
-     
-     - name: Cost Check
-       id: costs
-       run: |
-         COST=$(gcloud billing projects describe ${{ env.PROJECT }} \
-           --format="value(billingEnabled)")
-         echo "cost=$COST" >> $GITHUB_OUTPUT
-     
-     - name: Deploy/Shutdown
-       id: deploy
-       run: |
-         if [[ "${{ github.event.inputs.action }}" == "shutdown" ]] || \
-            [[ "${{ steps.costs.outputs.cost }}" > "${{ env.COST_THRESHOLD }}" ]]; then
-           python scripts/deploy.py shutdown
-           echo "status=shutdown" >> $GITHUB_OUTPUT
-         else
-           python scripts/deploy.py deploy
-           echo "status=deployed" >> $GITHUB_OUTPUT
-         fi
-     
-     - name: Notify
-       uses: actions/github-script@v6 
-       with:
-         script: |
-           const status = "${{ steps.deploy.outputs.status }}"
-           await github.rest.issues.createComment({
-             ...context.repo,
-             issue_number: context.issue.number, 
-             body: `Deployment status: ${status}`
-           })
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install google-cloud-sdk==450.0.0
+
+      - name: GCP Auth
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Cluster
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER }} \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT }}
+
+      - name: Cost Check
+        id: costs
+        run: |
+          COST=$(gcloud billing projects describe ${{ env.PROJECT }} \
+            --format="value(billingEnabled)")
+          echo "cost=$COST" >> $GITHUB_OUTPUT
+
+      - name: Deploy/Shutdown
+        id: deploy
+        run: |
+          if [[ "${{ github.event.inputs.action }}" == "shutdown" ]] || \
+             [[ "${{ steps.costs.outputs.cost }}" > "${{ env.COST_THRESHOLD }}" ]]; then
+            python scripts/deploy.py shutdown
+            echo "status=shutdown" >> $GITHUB_OUTPUT
+          else
+            python scripts/deploy.py deploy
+            echo "status=deployed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Status
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const status = "${{ steps.deploy.outputs.status }}"
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: `Deployment status: ${status}`
+            })
